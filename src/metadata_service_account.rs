@@ -30,7 +30,7 @@ impl MetadataServiceAccount {
 
     pub(crate) async fn with_client(client: &HttpClient) -> Result<Self, Error> {
         debug!("try to fetch token from GCP instance metadata server");
-        let token = RwLock::new(Self::fetch_token(client).await?);
+        let token = RwLock::new(Self::fetch_token(client, &[]).await?);
 
         debug!("getting project ID from GCP instance metadata server");
         let req = metadata_request(DEFAULT_PROJECT_ID_GCP_URI);
@@ -57,10 +57,14 @@ impl MetadataServiceAccount {
     }
 
     #[instrument(level = Level::DEBUG, skip(client))]
-    async fn fetch_token(client: &HttpClient) -> Result<Arc<Token>, Error> {
+    async fn fetch_token(client: &HttpClient, scopes: &[&str]) -> Result<Arc<Token>, Error> {
+        let mut uri = DEFAULT_TOKEN_GCP_URI.to_owned();
+        if !scopes.is_empty() {
+            uri = format!("{}?scopes={}", uri, scopes.join(","));
+        }
         client
             .token(
-                &|| metadata_request(DEFAULT_TOKEN_GCP_URI),
+                &|| metadata_request(&uri),
                 "MetadataServiceAccount",
             )
             .await
@@ -69,14 +73,15 @@ impl MetadataServiceAccount {
 
 #[async_trait]
 impl TokenProvider for MetadataServiceAccount {
-    async fn token(&self, _scopes: &[&str]) -> Result<Arc<Token>, Error> {
-        let token = self.token.read().await.clone();
-        if !token.has_expired() {
-            return Ok(token);
-        }
+    async fn token(&self, scopes: &[&str]) -> Result<Arc<Token>, Error> {
+        // Disable cache until scopes are accounted for
+        // let token = self.token.read().await.clone();
+        // if !token.has_expired() {
+        //     return Ok(token);
+        // }
 
         let mut locked = self.token.write().await;
-        let token = Self::fetch_token(&self.client).await?;
+        let token = Self::fetch_token(&self.client, scopes).await?;
         *locked = token.clone();
         Ok(token)
     }
